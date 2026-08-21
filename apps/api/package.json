@@ -1,0 +1,26 @@
+{
+  "name": "@tenex/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Express + TypeScript backend — talks to Supabase server-side (DECISIONS.md §6, §9).",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc --noEmit",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tenex/shared": "*",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.0"
+  }
+}

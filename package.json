@@ -1,0 +1,16 @@
+{
+  "name": "tenex-soc-log-analyzer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Full-stack SOC log analysis take-home project.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:api": "npm run dev --workspace=apps/api",
+    "build:web": "npm run build --workspace=apps/web",
+    "typecheck": "npm run typecheck --workspace=apps/web && npm run typecheck --workspace=apps/api && npm run typecheck --workspace=packages/shared"
+  }
+}
