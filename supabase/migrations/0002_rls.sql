@@ -115,8 +115,20 @@ values ('log-uploads', 'log-uploads', false)
 on conflict (id) do nothing;
 
 -- RLS is enabled on storage.objects by default on every Supabase project;
--- this line is included defensively and is a no-op if already enabled.
-alter table storage.objects enable row level security;
+-- this statement is included defensively and is a no-op if already enabled.
+-- Wrapped in a DO block because the role that runs migrations doesn't always
+-- own storage.objects (e.g. the Supabase CLI's local-dev migration runner) —
+-- in that case RLS is already on (Supabase's own storage bootstrap enables
+-- it), so an insufficient_privilege error here is expected and safe to
+-- swallow rather than letting it abort the whole migration.
+do $$
+begin
+  alter table storage.objects enable row level security;
+exception
+  when insufficient_privilege then
+    null;
+end;
+$$;
 
 -- Objects are expected at `uploads/{auth.uid()}/{file_id}.log` (§9). The
 -- Storage upload write itself goes through the service-role key (bypasses

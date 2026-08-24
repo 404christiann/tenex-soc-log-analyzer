@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { LogEventSchema } from "./log-event";
 import { AnomalySchema } from "./anomaly";
-import { LlmStatusSchema } from "./llm-status";
+import { LlmStatusSchema, SummaryLlmStatusSchema } from "./llm-status";
 
 /** `log_files.status` per DECISIONS.md §8 / the SQL schema — an honest failure state, not just a boolean. */
 export const LogFileStatusSchema = z.enum(["processing", "complete", "failed"]);
@@ -16,7 +16,8 @@ export const LogFileMetaSchema = z.object({
   /** Populated when `status === "failed"`; honest reason, never a silent failure. */
   errorMessage: z.string().nullable(),
   llmJudgeStatus: LlmStatusSchema,
-  llmSummaryStatus: LlmStatusSchema,
+  /** Four-state (§14c): `pending` until the summary SSE endpoint has generated (or failed to generate) a summary for this file. */
+  llmSummaryStatus: SummaryLlmStatusSchema,
 });
 export type LogFileMeta = z.infer<typeof LogFileMetaSchema>;
 
@@ -41,19 +42,37 @@ export const PaginatedEventsSchema = z.object({
 export type PaginatedEvents = z.infer<typeof PaginatedEventsSchema>;
 
 /**
- * `POST /api/logs/upload` response. One synchronous call returns everything
- * (DECISIONS.md §10): file metadata, per-feature LLM status, the first page
- * of parsed events, all anomalies, and the timeline summary (or its
- * deterministic fallback text on LLM failure).
+ * Non-fatal parse-time issues (DECISIONS.md §14a malformed-input handling /
+ * §13's `malformed-edge-cases.log`) — present on `POST /api/logs/upload`'s
+ * response only (computed in-memory during that request, not persisted), so
+ * this surfaces once, at upload time. `sampleReasons` is capped by the
+ * server, never the full per-line list.
+ */
+export const ParseErrorsSummarySchema = z.object({
+  count: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  sampleReasons: z.array(z.string()),
+});
+export type ParseErrorsSummary = z.infer<typeof ParseErrorsSummarySchema>;
+
+/**
+ * `POST /api/logs/upload` response. One synchronous call runs parse ->
+ * rules -> judge -> persist (DECISIONS.md §10 as amended by §14c): file
+ * metadata, judge status, the first page of parsed events, and all
+ * anomalies. The timeline summary is NOT generated at upload time anymore
+ * (§14c point 3) — `llmSummaryStatus` is always `{ status: "pending" }`
+ * here, and the summary itself arrives later via the on-demand SSE endpoint
+ * `GET /api/logs/:id/summary/stream` (see `SummaryStreamEventSchema`).
  */
 export const UploadResponseSchema = z.object({
   file: LogFileMetaSchema,
   llmJudgeStatus: LlmStatusSchema,
-  llmSummaryStatus: LlmStatusSchema,
+  /** Always `{ status: "pending" }` — the summary hasn't been attempted yet at upload time (§14c). */
+  llmSummaryStatus: SummaryLlmStatusSchema,
   events: PaginatedEventsSchema,
   anomalies: z.array(AnomalySchema),
-  /** LLM-generated narrative, or the deterministic templated fallback on `llmSummaryStatus !== "ok"`. */
-  summary: z.string(),
+  /** `null` when the file had zero parse errors AND zero skipped blank lines. */
+  parseErrors: ParseErrorsSummarySchema.nullable(),
 });
 export type UploadResponse = z.infer<typeof UploadResponseSchema>;
 
@@ -68,7 +87,7 @@ export const GetFileDetailResponseSchema = z.object({
   file: LogFileMetaSchema,
   events: PaginatedEventsSchema,
   anomalies: z.array(AnomalySchema),
-  /** `null` if a summary was never generated for this file (e.g. still processing). */
+  /** `null` if a summary hasn't been generated for this file yet (§14c: `llmSummaryStatus` is `pending` until the SSE endpoint runs). */
   summary: z.string().nullable(),
 });
 export type GetFileDetailResponse = z.infer<typeof GetFileDetailResponseSchema>;

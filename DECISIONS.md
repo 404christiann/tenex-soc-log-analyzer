@@ -302,6 +302,242 @@ reads this file at runtime, so it reads as a validation artifact, not a hardcode
 | `threatname` populated | direct signal | fixed 95 |
 | Malware-category access | direct signal (Malware Sites/Phishing/Botnet Callback/Spyware Or Adware) | fixed 90 |
 
+## 14b. Decisions made during implementation
+
+**Theme — light mode only, no dark default.** The frontend agent shipped dark-as-default with a
+toggle (a reasonable judgment call for a "SOC tool aesthetic," but not what was asked). Corrected:
+light mode only. Simplifies the design surface (one palette to get right, one less thing to
+explain) and matches explicit user preference over the agent's own aesthetic assumption.
+
+**Testing strategy — integration tests written after v1 implementation is complete, not
+alongside it; used as a TDD case study for the next bug fix found.** Each phase so far wrote its
+own unit/module-level tests as it went (parser, rule engine, LLM layer, API routes all have real
+test coverage, verified against a disposable local Postgres/Supabase stack). What's missing is a
+comprehensive, automated, whole-system integration suite (the kind of full click-through the
+Phase 8 agent did manually in a browser) — that gets written as its own explicit phase once v1
+(through README/Phase 10) is finished, not folded into the phases that already have their own
+tests. Once that suite exists, the very next thing done with it is TDD-style: write a failing
+integration test that reproduces the `malformed-edge-cases.log` / whole-file-UTF-8-check bug
+below, confirm it fails, then fix the underlying logic, confirm it passes. This is a deliberate
+sequencing choice, not an oversight — worth mentioning in the interview as "here's a case where
+I wrote a regression test before the fix, even though the rest of the build wasn't strict TDD."
+
+**Bug found in Phase 8 verification, fix confirmed but sequenced after the integration-test
+phase (see above):** the upload-time "require valid UTF-8" check (§14a's magic-byte
+reinterpretation) validates the *whole file buffer* strictly, so `malformed-edge-cases.log` —
+built specifically to demonstrate the parser's per-line graceful degradation — gets rejected
+outright at the security gate before the parser ever sees it, since it deliberately contains a
+few corrupted UTF-8 bytes among otherwise-valid content. **Resolution: loosen the check from
+zero-tolerance to a threshold** (e.g. reject only if >2% of bytes are invalid/non-printable) —
+genuine binary files fail this easily (mostly non-text), while a mostly-valid text file with a
+few deliberately-corrupted bytes passes through to the parser, which already handles per-line
+invalid UTF-8 correctly. Preserves the real security intent (reject disguised binaries) without
+defeating the one example file built to prove graceful degradation.
+
+**Fix landed.** `upload-validate.ts`'s zero-tolerance `decodeUtf8Strict()` (`TextDecoder("utf-8",
+{ fatal: true })` over the whole buffer) was replaced with `decodeUtf8WithThreshold()`: decode
+leniently (`TextDecoder("utf-8", { fatal: false })`, which substitutes U+FFFD for each invalid
+byte sequence instead of throwing), then reject only if replacement characters exceed 2% of the
+decoded text's length. The other three magic-byte checks (binary-signature rejection, null-byte
+rejection, header/shape check) were left unchanged. The TDD regression test in
+`apps/api/src/routes/logs.integration.test.ts` (previously labeled `[EXPECTED TO FAIL until
+DECISIONS.md §14b's UTF-8-threshold fix lands]`) now passes: `malformed-edge-cases.log` uploads
+successfully (201), reports the parser's known 19 errors / 2 skipped-blank counts, and persists
+the 30 recovered events. Two new unit tests were added to `upload-validate.test.ts` covering the
+threshold behavior directly (mostly-valid text with a couple of corrupted bytes passes; a
+buffer that's mostly invalid bytes, simulating a disguised binary, still rejects) — binary-file
+rejection (checked both via `checkBinarySignature`'s magic-byte tests and the threshold-based
+UTF-8 check) remains intact. Full `apps/api` vitest suite: 160 passed, 1 skipped (the live LLM
+smoke test, which requires a real `ANTHROPIC_API_KEY`), 0 failing. Playwright E2E suite (`apps/web`):
+6/6 passed, no regressions. `tsc --noEmit` clean across `apps/web`, `apps/api`, and
+`packages/shared`.
+
+## 14c. Post-v1 design pass — results page, upload UI, real streaming summary (third grill round)
+
+Triggered by user feedback referencing aicss.dev (an AI-component registry) and shadcn's newer
+"base" components. Before asking questions, the actual source of every referenced component was
+fetched directly from aicss.dev's registry JSON rather than guessed — this mattered, because one
+reference component turned out to be built on fabricated demo content (see below), which directly
+informed the recommendation and the resulting decision.
+
+**Results page restructured into top-level tabs: Timeline / Anomalies / Events.** Rejected
+alternative: independently-scrollable fixed-height panels within one page. Chosen because it
+directly solves the real complaint (events table pushed far down the page by a long anomalies
+list) and gives each section room to be presented well without competing for vertical space.
+File header (name/status/upload date) stays fixed above the tabs.
+
+**Anomalies tab: severity sub-tabs (High/Medium/Low, each labeled with a count) + soft-pill
+badges (shadcn `base/badge` style) + anomalies converted from cards into a real table
+(aicss `data-table` visual language — rounded-xl bordered shell, clean row lines) with
+click-to-expand rows.** Collapsed row: severity badge, rule type, one-line truncated
+explanation, confidence, timestamp. Expanded: full explanation text plus, when present, the
+LLM's adjusted-confidence reasoning. Chosen over cramming full explanation text into a fixed
+table cell (uneven, unreadable row heights) or dropping the table conversion entirely (loses
+the scannable, data-dense presentation being asked for).
+
+**Skeleton loading (shadcn `base/skeleton`) on navigating into a results page — minimum-floor
+duration (~600-800ms), not a fixed 1-2s.** Shows for however long the real fetch takes, floored
+so it never flickers on a fast response, never artificially delays already-arrived real data.
+
+**Upload "thinking" rotating text — generic flavor text, not tied to real rule names.**
+The reference component (`thinking-state`) is just a static shimmering label with no rotation
+logic; the rotation itself had to be designed. The recommendation was to rotate through
+real, stage-derived micro-copy (e.g. actual rule names during the "Rules" stage) to preserve the
+anti-fake-UI discipline held everywhere else in this build — **the user explicitly chose generic
+flavor text instead ("Analyzing…", etc.), overriding that recommendation.** Recorded as a
+deliberate, informed choice, not an oversight: unlike a progress percentage or a confidence
+score, decorative loading copy isn't a factual claim, so the honesty principle doesn't bind it
+the same way. Applied to the existing real staged-progress system (Uploading → Parsing → Rules
+→ AI review) — note "Summarizing" is removed as a stage, see below.
+
+**Timeline summary — real streaming, not a frontend-only illusion. This is the highest-stakes
+call of this round and amends two previously locked decisions (§4, §10).** The reference
+component (`thinking-reasoning`) was found to be 100% hardcoded fake demo text on a fixed
+timer — not real model output — which framed the choice as: (A) build real SSE streaming with
+genuine model reasoning, a real architecture change, vs. (B) an honest frontend-only illusion
+built from real facts already in the response, cheaper and non-architecture-changing. **The user
+chose (A).** Locked shape:
+
+1. **Model switch for the summary: Haiku 4.5 → Claude Sonnet 5.** Reverses part of §4's
+   cost-conscious model-split rationale — Haiku 4.5 isn't in the tier that reliably exposes
+   adaptive-thinking with visible summarized reasoning; Sonnet 5 (already used for the judge) is.
+   Explicitly signed off on by the user, informed that the absolute cost delta is trivial at this
+   app's scale (~4¢/file across the whole pipeline, established earlier in §4).
+2. **Scope is narrow: only the summary streams.** The judge is unchanged — stays synchronous,
+   part of the upload request, structured tool-call output (no natural "watch it stream" UX for
+   JSON, and anomalies need their LLM-adjusted confidence ready immediately when the Anomalies
+   tab opens).
+3. **Summary generation is decoupled from the upload request entirely — amends §10.** Upload
+   becomes: parse → rules → judge → persist → respond immediately with events + anomalies (no
+   "Summarizing" stage in the upload flow anymore, and uploads get faster as a side effect).
+   Summary generation moves to its own SSE endpoint, triggered when the Timeline tab is opened —
+   deliberately chosen to land in the new tabbed structure above, since that's exactly where
+   "watch it think, then read the result" belongs. §10's synchronous-single-request model still
+   holds for parsing/rules/judge; it no longer covers the summary.
+4. **Honest three-state failure handling carries over unchanged in substance, different
+   transport.** No API key → the stream immediately emits a `not_configured` event, same locked
+   banner copy, no fake thinking animation plays for a call that never happened. Mid-stream
+   failure emits a `failed` event and falls back to the deterministic templated summary — same
+   three-state design as §14a, just delivered as SSE events instead of upfront JSON fields.
+
+**Implemented and verified live against the real Anthropic API**, via three subagents (two run
+in parallel — backend streaming endpoint, and upload-flow flavor-text/skeleton — followed by the
+full results-page restructuring once the streaming contract existed). Real, observed reasoning
+text from a live run: *"I'm piecing together a chronological timeline of the anomalies, starting
+with a high-confidence exfiltration event from Brittany Huels to Google Drive, followed by a
+burst of rapid requests from Audra Kassulke's IP hitting multiple cloud storage domains..."* —
+genuinely grounded in the real uploaded file, not fabricated. Cached replay confirmed instant
+(no LLM call, no animation) on revisiting an already-generated Timeline tab. The `not_configured`
+path was also proven live (no thinking animation for a call that never happened). Anomalies tab:
+severity sub-tabs with live counts, table-with-expandable-rows preserving every field the old
+always-expanded cards showed. Full test suites (Playwright + both API/web vitest) green,
+`tsc --noEmit` clean across all three workspaces.
+
+## 14d. Logo, timeline bullet legibility/linking, and passwordless auth (fourth grill round)
+
+**Logo.** A real brand asset exists (`~/Downloads/tenexAILogo.webp`, 512×512 RGBA, teal
+rounded-square with black "TENEX" wordmark) — the `ShieldHalf` lucide icon used everywhere until
+now was always a placeholder. Decision: use the real asset as-is (don't recolor a provided brand
+asset just because it introduces a second color alongside the blue-600 UI accent — that's normal,
+logo color ≠ UI-accent color in most real products), mid-sized, in the app-shell header, the new
+login page, and as the browser favicon.
+
+**Timeline bullet linking — inline `event:`-scheme markdown links, not text-matching or a second
+LLM call.** Text-matching a bullet's prose against the event table after generation is fragile
+(shared IPs, timestamp-format mismatches) and a wrong link on a security tool is actively
+misleading, worse than no link. Chosen instead: pass real event/anomaly IDs (not just descriptive
+aggregate stats) into the summary prompt, instruct the model to cite specific events using
+ordinary markdown links with a custom scheme (`[10.9.220.112](event:evt_abc123)`) inline as it
+streams. The existing markdown renderer gains one addition — intercept `event:` link clicks and
+reuse the same tab-switch/scroll/highlight interaction already built for Anomalies↔Events
+cross-linking. No second LLM call, no bespoke parser. The model can only cite real IDs because
+only real IDs are in its context (same "can't invent, can only reference what's real" discipline
+as the judge, §3); the frontend can also silently de-link any ID that doesn't match a real event
+it has loaded, so a hallucinated citation degrades to plain text rather than a broken/wrong link.
+Presentation: bullets restyled from dense inline-code-heavy paragraphs into compact rows — bold
+timestamp lead-in, one concise description line, IPs/users/domains as small pill/chip tokens
+instead of raw inline `code`, citation rendered as a "View event →" affordance rather than an
+inline text link.
+
+**Passwordless auth overhaul — amends §7.** Complaint: Supabase's built-in magic link only
+allowed "2 attempts, then a 1-hour wait." Diagnosed (not assumed) as Supabase's **default
+built-in email service's rate limit** — deliberately throttled hard because it's meant only for
+testing, not a limitation of the OTP/magic-link verification system itself. Confirmed this framing
+before deciding anything, since it determined which of two very different paths was correct:
+
+- **Path A (chosen):** keep Supabase Auth's native `signInWithOtp` (numeric-code mode) and all its
+  built-in code generation/verification/expiry/rate-limiting exactly as-is; fix only *who sends
+  the email* by configuring a custom SMTP provider (Resend) on the Supabase project. Small,
+  low-risk, mostly configuration — consistent with §7's original "don't reinvent a security
+  primitive" reasoning, just applied again here.
+- **Path B (rejected):** build a fully custom OTP system (own code generation, storage, expiry,
+  single-use enforcement, rate limiting, Resend API calls, session minting) — everything Supabase
+  already gives correctly, we'd now own and have to get right ourselves. Rejected for the same
+  reason hand-rolled auth was rejected in §7.
+
+**Login/signup collapse into one screen, `/signup` removed entirely.** With `signInWithOtp`
+(`shouldCreateUser: true` by default), there is no password step to distinguish "new" from
+"returning" — both are identically "enter email → get a code → enter the code." A separate
+signup screen would be two doors to the same room. One email-entry screen, no "Create account"
+button, no separate route.
+
+**Resend setup:** new dedicated subdomain **`tenexai.onziofutbol.com`** (not the existing
+`auth.onziofutbol.com`, which is already the live Onzio platform's sending identity for a real
+paying customer — mixing an unrelated take-home's mail traffic through it would blur sender
+reputation and brand identity for no benefit). DNS verification is a user-side step (Resend hands
+back SPF/DKIM records to add at the registrar) and isn't blocking, since local dev never touches
+Resend at all — see below. The Resend API key does **not** go into this repo or any env file; SMTP
+credentials are configured directly in the (not-yet-created) hosted Supabase project's dashboard
+(Authentication → Email → SMTP Settings: host `smtp.resend.com`, user `resend`, password = API
+key) — documented as a setup step in the README, not a functional variable our code reads.
+
+**Local dev stays on Supabase's local Inbucket email catcher, never Resend.** Inbucket intercepts
+outbound test emails without real delivery — already implicitly relied on all session via
+auto-confirm. Verifying the OTP flow locally means reading the code from Inbucket's local
+catcher/API instead of a real inbox.
+
+**PIN input UI — 6 digits, real Preline markup as the visual reference, shadcn's `input-otp` for
+the actual interaction logic (not Preline's vanilla-JS plugin — consistent with §11's original
+Preline-vs-shadcn call: borrow the visual language, not the JS architecture).** Includes a
+"Resend code" link with a short cooldown (~30-60s) so a non-arriving code isn't a dead end.
+
+## 14e. Timeline summary — three-direction design bake-off (resolved: severity-grouped)
+
+Three candidate redesigns of the Timeline tab were built in parallel git worktrees and compared
+live side by side: an **executive digest** (client-computed stat strip + streaming LLM TL;DR hero
+above the chronological bullets), a **severity-grouped** layout, and a **visual timeline**. The
+executive digest was briefly picked and merged, but the call was reversed to **severity-grouped**
+before it shipped anywhere real — that is what's merged into main now, and the digest changes
+(`apps/web/src/lib/digest.ts`, the TL;DR prompt rules and their tests, the `eventsTotal` prop)
+were fully reverted rather than layered under it.
+
+What severity-grouped means: the summary's bullets are grouped under exact `### High severity` →
+`### Medium severity` → `### Low severity` headings (plus an optional trailing `### Observations`
+for uncited commentary), empty sections omitted, chronological within each section — a triaging
+analyst reads the worst findings first, and the fixed severity-descending order is what lets
+linear SSE streaming and grouping compose with no client-side reordering. Severity is told, never
+guessed: `getSeverity`/`anomalySeverityConfidence` moved to `packages/shared/src/severity.ts`
+(web's `severity.ts` re-exports them) so the API prompt and the UI badges band on literally one
+function, and `buildSummaryUserPrompt` prints an authoritative `severity` field per top-anomaly
+line — a bullet's section always matches the badge its citation jumps to. The h3 renderer turns
+those headings into labeled dividers reusing the Anomalies tab's badge + dot language. All
+§14c/§14d one-event-per-bullet, citation, and rendering-pipeline rules carry over verbatim, with
+grouping tests added to `apps/api/src/llm/prompts.test.ts`. Verified live across three fresh
+generations with every citation machine-checked into its real DB-banded tier (9/9 each run). The
+two non-chosen worktrees are kept on disk for reference.
+
+**Closing note — digest and severity-grouped combined (explicit user call).** The bake-off's
+framing of the two finalists as mutually exclusive was reversed: the digest's client-computed
+stat strip and streaming `**TL;DR:**` "Key takeaway" hero were reintegrated ON TOP OF the
+severity-grouped structure, not instead of it. One prompt now produces one coherent shape —
+TL;DR lead line first (explicitly not a heading), blank line, then the fixed-order severity
+sections — and the frontend composes the two parsers by ordering: `splitTldr` peels the lead
+off the raw stream before the h3 section-heading renderer ever sees the remainder. All digest
+honesty rules carry over (computed-fallback hero only in terminal no-TL;DR states, never a
+faked model sentence; older cached summaries without a TL;DR or headings still render
+sensibly). Re-verified live across three fresh generations, every citation again
+machine-checked into its DB-banded tier.
+
 ## 14. Deployment (bonus — deferred until v1 is fully functional)
 
 **Planned target:** Vercel (frontend, matches the PDF's own suggestion, zero-config for Next.js)

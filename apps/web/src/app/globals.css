@@ -1,15 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-
-@custom-variant dark (&:is(.dark *));
+@plugin "@tailwindcss/typography";
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-geist-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,73 +47,152 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * Light mode only (DECISIONS.md §14b) — a single, deliberately-chosen
+ * palette, not a de-saturated leftover of a dark design. Cool slate-blue
+ * undertone (not pure grayscale) for a legible, slightly technical/
+ * data-dense feel appropriate to a SOC analyst tool: a faint blue-gray page
+ * background with pure-white cards for real lift/definition, firmer
+ * borders than shadcn's stock default, and a deep slate-blue primary accent
+ * (not black) used for links, focus rings, and active/loading states.
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --background: oklch(0.984 0.003 240);
+  --foreground: oklch(0.19 0.016 240);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.19 0.016 240);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.19 0.016 240);
+  --primary: oklch(0.38 0.09 250);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --secondary: oklch(0.955 0.005 240);
+  --secondary-foreground: oklch(0.27 0.02 240);
+  --muted: oklch(0.955 0.005 240);
+  --muted-foreground: oklch(0.47 0.016 240);
+  --accent: oklch(0.93 0.016 250);
+  --accent-foreground: oklch(0.27 0.02 240);
+  --destructive: oklch(0.55 0.22 27);
+  --border: oklch(0.9 0.007 240);
+  --input: oklch(0.9 0.007 240);
+  --ring: oklch(0.38 0.09 250);
+  --chart-1: oklch(0.6 0.1 250);
+  --chart-2: oklch(0.5 0.09 200);
+  --chart-3: oklch(0.65 0.15 30);
+  --chart-4: oklch(0.7 0.14 80);
+  --chart-5: oklch(0.55 0.13 320);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar: oklch(0.97 0.004 240);
+  --sidebar-foreground: oklch(0.19 0.016 240);
+  --sidebar-primary: oklch(0.38 0.09 250);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-accent: oklch(0.93 0.016 250);
+  --sidebar-accent-foreground: oklch(0.27 0.02 240);
+  --sidebar-border: oklch(0.9 0.007 240);
+  --sidebar-ring: oklch(0.38 0.09 250);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+/*
+ * Rotating "thinking" flavor text on the upload card (DECISIONS.md §14c) —
+ * a shimmering gradient sweep across the text, plus a soft fade/rise each
+ * time the phrase swaps (the swapping span is re-keyed, restarting
+ * upload-flavor-in). Kept as plain CSS so the two animations compose.
+ */
+@keyframes upload-flavor-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes upload-flavor-shimmer {
+  from {
+    background-position: 175% 0;
+  }
+  to {
+    background-position: -75% 0;
+  }
+}
+.upload-flavor-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 35%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 65%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation:
+    upload-flavor-in 0.45s ease both,
+    upload-flavor-shimmer 1.6s linear infinite;
+}
+
+/*
+ * Streaming "Thinking…" reasoning block on the Timeline tab (DECISIONS.md
+ * §14c) — adapted from aicss.dev's thinking-reasoning interaction mechanics,
+ * driven by REAL SSE thinking deltas (components/thinking-reasoning.tsx).
+ * The shimmer reuses the same gradient-sweep recipe as .upload-flavor-text
+ * so the two "model is working" cues read as one family.
+ */
+@keyframes thinking-shine {
+  from {
+    background-position: 175% 0;
+  }
+  to {
+    background-position: -75% 0;
+  }
+}
+.thinking-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 35%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 65%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: thinking-shine 2.25s linear infinite;
+}
+@keyframes thinking-sentence-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.thinking-sentence {
+  animation: thinking-sentence-in 420ms ease both;
+}
+/* Soft top/bottom fade masks over the capped-height reasoning viewport. */
+.thinking-fade-mask {
+  mask-image: linear-gradient(to bottom, transparent 0, black 20px, black calc(100% - 20px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 20px, black calc(100% - 20px), transparent 100%);
+}
+/* Grid-rows collapse trick for the "Thought for Ns" fold (reference's .trCollapsible). */
+.thinking-collapsible {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 320ms ease,
+    opacity 220ms ease;
+}
+.thinking-collapsible.is-collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
 }
 
 @layer base {

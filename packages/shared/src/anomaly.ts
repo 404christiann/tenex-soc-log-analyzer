@@ -46,5 +46,14 @@ export const AnomalySchema = z.object({
   rank: z.number().int(),
   /** Id of the `LogEvent` this anomaly refers to. */
   eventRef: z.string(),
+  /**
+   * ISO datetime of the referenced event, when known. Additive/optional on
+   * purpose: the in-memory rule-engine anomalies (whose `eventRef` is still
+   * an array index into the parsed events) don't carry it — it's populated
+   * by the API's DB mappers so the results page's anomalies table can show
+   * a timestamp column (DECISIONS.md §14c) without the client having to
+   * page through every event to resolve `eventRef`.
+   */
+  eventDatetime: z.string().nullable().optional(),
 });
 export type Anomaly = z.infer<typeof AnomalySchema>;

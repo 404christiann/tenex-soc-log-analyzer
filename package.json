@@ -11,6 +11,14 @@
     "dev:web": "npm run dev --workspace=apps/web",
     "dev:api": "npm run dev --workspace=apps/api",
     "build:web": "npm run build --workspace=apps/web",
-    "typecheck": "npm run typecheck --workspace=apps/web && npm run typecheck --workspace=apps/api && npm run typecheck --workspace=packages/shared"
+    "typecheck": "npm run typecheck --workspace=apps/web && npm run typecheck --workspace=apps/api && npm run typecheck --workspace=packages/shared",
+    "generate-logs": "tsx scripts/generate-logs/generate.ts",
+    "validate-logs": "tsx scripts/generate-logs/validate.ts"
+  },
+  "devDependencies": {
+    "@faker-js/faker": "^10.1.0",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.0"
   }
 }
