@@ -176,6 +176,8 @@ function describeWindow(window: AnomalyWindow | null): string | null {
  */
 const EXFIL_RULE = "bytes_out_exfil";
 const THREAT_RULES = new Set(["threatname_hit", "malware_category"]);
+/** DECISIONS.md §15's 8th rule — a distinct C2 signature worth its own callout, same tier as the threat-detection callout below. */
+const BEACONING_RULE = "beaconing";
 
 export function buildComputedDigest(anomalies: Anomaly[], eventsTotal: number): string {
   const eventsPhrase = `${eventsTotal.toLocaleString("en-US")} events`;
@@ -200,6 +202,8 @@ export function buildComputedDigest(anomalies: Anomaly[], eventsTotal: number): 
   let calloutPart: string | null = null;
   if (notable.some((a) => a.ruleType === EXFIL_RULE)) {
     calloutPart = "including possible data exfiltration";
+  } else if (notable.some((a) => a.ruleType === BEACONING_RULE)) {
+    calloutPart = "including possible C2 beaconing";
   } else {
     const threatCount = notable.filter((a) => THREAT_RULES.has(a.ruleType)).length;
     if (threatCount > 0) {

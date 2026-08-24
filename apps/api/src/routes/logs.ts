@@ -13,6 +13,7 @@ import {
 } from "../db/mappers";
 import { HttpError } from "../errors";
 import { requireAuth } from "../middleware/auth";
+import { summaryStreamRateLimiter, uploadRateLimiter } from "../middleware/rate-limit";
 import { MAX_PARSED_EVENTS, UPLOAD_FIELD_NAME, uploadMulter, validateUpload } from "../middleware/upload-validate";
 import { parseLogFile } from "../parser/parse-log";
 import { runRuleEngine } from "../rules/engine";
@@ -32,6 +33,11 @@ import { handleSummaryStream } from "./summary-stream";
  * timeline summary is no longer generated here — it streams on demand from
  * `GET /:id/summary/stream` (see `summary-stream.ts`), leaving
  * `log_files.llm_summary_status` at its `'pending'` default until then.
+ *
+ * §5/§15: `/upload` and `/:id/summary/stream` also sit behind their own
+ * per-IP rate limiter (`middleware/rate-limit.ts`) — the two genuinely
+ * expensive/abusable routes in this API (real Anthropic calls, DB/Storage
+ * writes), see that file's doc comment for the full reasoning.
  */
 
 export const LOG_UPLOADS_BUCKET = "log-uploads";
@@ -315,6 +321,10 @@ async function handleUpload(req: Request, res: Response): Promise<void> {
 
 logsRouter.post(
   "/upload",
+  // DECISIONS.md §5/§15: rate-limited before auth even runs — an
+  // unauthenticated flood shouldn't get a free pass on JWT verification
+  // cost just because it'll 401 anyway.
+  uploadRateLimiter,
   requireAuth,
   (req, res, next) => {
     req.setTimeout(UPLOAD_TIMEOUT_MS);
@@ -405,7 +415,7 @@ logsRouter.get("/:id", requireAuth, async (req, res, next) => {
 // GET /api/logs/:id/summary/stream  (SSE — DECISIONS.md §14c)
 // ---------------------------------------------------------------------------
 
-logsRouter.get("/:id/summary/stream", requireAuth, (req, res, next) => {
+logsRouter.get("/:id/summary/stream", summaryStreamRateLimiter, requireAuth, (req, res, next) => {
   handleSummaryStream(req, res).catch(next);
 });
 

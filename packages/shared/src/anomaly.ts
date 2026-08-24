@@ -15,6 +15,9 @@ export const AnomalyRuleTypeSchema = z.enum([
   "repeated_blocked",
   "off_hours",
   "rare_scripted_user_agent",
+  // 8th rule, DECISIONS.md §15 — interval-regularity ("beaconing")
+  // detection, deferred from v1 (§3/§14) and implemented as a stretch item.
+  "beaconing",
 ]);
 export type AnomalyRuleType = z.infer<typeof AnomalyRuleTypeSchema>;
 

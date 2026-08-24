@@ -108,6 +108,35 @@ export function clamp(value: number, min: number, max: number): number {
 }
 
 /**
+ * Confidence-scaling curve for "lower value = more anomalous" statistics —
+ * the mirror image of `scaleExfilConfidence`'s "higher z = more anomalous".
+ * Used by `beaconing.ts`'s coefficient-of-variation scoring: a *tighter*
+ * (smaller) CV is the suspicious direction (more mechanically regular
+ * timing), so confidence rises as `value` falls, the opposite ramp
+ * direction from the exfil curve above:
+ *
+ *   confidence(v) = confAtLoose + slope * (looseThreshold - v)
+ *   slope = (confAtTight - confAtLoose) / (looseThreshold - tightThreshold)
+ *
+ * Clamped flat outside the two anchor points, same as `scaleExfilConfidence`
+ * and `scaleCountOverThresholdConfidence` above — this file's third and
+ * final confidence-scaling shape, covering every direction a rule's raw
+ * statistic can point relative to its threshold (over a floor, under a
+ * ceiling, or — here — under a floor scored by how far under).
+ */
+export function scaleInverseThresholdConfidence(
+  value: number,
+  looseThreshold: number,
+  tightThreshold: number,
+  confAtLoose: number,
+  confAtTight: number,
+): number {
+  const slope = (confAtTight - confAtLoose) / (looseThreshold - tightThreshold);
+  const raw = confAtLoose + slope * (looseThreshold - value);
+  return clamp(raw, confAtLoose, confAtTight);
+}
+
+/**
  * For each index `right` in a time-sorted array, expands a left pointer so
  * `[left, right]` is the maximal window satisfying `times[right] - times[left]
  * <= windowMs`, and reports `right - left + 1` (the window's count) via

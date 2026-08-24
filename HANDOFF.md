@@ -4,18 +4,24 @@ Written because the prior session's context window filled up. Read this first, t
 `DECISIONS.md` for the full "why" behind every architecture/design choice — this file is just
 "where things stand right now and what to do next," not a replacement for that record.
 
-## ⚠️ Most urgent thing: nothing is committed except the very first commit
+## It's committed, pushed, and deployed
 
-```
-git log --oneline
-4639b39 Scaffold monorepo foundation: apps/web, apps/api, packages/shared, Supabase schema+RLS
-```
-
-**77 files of real, working, tested code sit uncommitted** in the working tree — the entire
-v1 build (parser, rule engine, LLM layer, API, frontend, passwordless auth, three rounds of UI
-design polish) has never been committed past the original scaffold. Before anything else, either
-commit this (in sensible chunks or as one commit — ask the user which they'd prefer) or at least
-make sure nothing gets lost. This is the single biggest risk right now.
+Everything is on GitHub (`github.com/404christiann/tenex-soc-log-analyzer`, public, `main`) and
+live in production:
+- **Frontend:** https://tenex-soc-log-analyzer.vercel.app (Vercel, auto-deploys on push to `main`)
+- **Backend:** https://tenex-soc-log-analyzer.onrender.com (Render free tier, same deploy trigger)
+- **Database/Auth:** Supabase project `tenexai` (`jjtmuqmzimpmkybojjdx`), all migrations applied
+  through `0004_summary_pending.sql`; `0005_beaconing_rule_type.sql` (this session's stretch-item
+  work) is written but applied to **local dev only** — see the stretch-items section below for
+  why it still needs a deliberate hosted-apply step before beaconing works in production.
+- **Keep-alive:** a cron-job.org job pings the Render `/health` endpoint every 10 minutes (outside
+  this repo — configured directly in the user's cron-job.org account) to dodge the free tier's
+  15-minute idle sleep.
+- **Auth is fully working end-to-end in production**, not just locally: hosted Supabase's Site
+  URL, redirect URLs, Resend SMTP (sandbox sender `onboarding@resend.dev`, no domain verification
+  yet), both email templates, and the OTP code length (was defaulting to 8, app expects 6) were
+  all fixed against the *hosted* project this session — none of this lives in `config.toml`, which
+  only governs the local CLI stack.
 
 ## What this project is
 
@@ -31,7 +37,8 @@ passes done across this and the prior session.
 Yes. Every must-have from the take-home is built and verified:
 - Passwordless OTP auth (Supabase Auth, no passwords anywhere)
 - Log upload with real server-side validation (extension/size/magic-byte/content checks)
-- Parser + 7-rule deterministic anomaly engine (statistically grounded confidence scores)
+- Parser + 8-rule deterministic anomaly engine (statistically grounded confidence scores —
+  the 8th rule, beaconing, was added post-v1 as a stretch item, DECISIONS.md §15)
 - LLM judge (Claude Sonnet 5) that can only refine existing findings within a ±15 confidence
   band — never invents or removes anomalies
 - Real streaming AI timeline summary (Sonnet 5, adaptive thinking visible while it streams),
@@ -93,24 +100,50 @@ real logo, light-mode-only theming), then a deep pass specifically on the Timeli
   main app plus more than one exploration worktree at once isn't possible; expect to stop one
   to start another if comparing things side-by-side again.
 
-## Deferred stretch items (never started, all explicitly optional per DECISIONS.md §5/§14)
+## Deferred stretch items (all explicitly optional per DECISIONS.md §5/§14)
 
-- Rate limiting on login/upload endpoints
-- Security headers (helmet-equivalent) + CORS hardening beyond the current single-origin allow
-- Cloud deployment (Vercel + Render + Supabase — DECISIONS.md §14 has the plan and flags a known
-  Render cold-start risk)
-- Beaconing detection (interval-regularity anomaly rule)
+Three of the original five are now **done** (this session — DECISIONS.md §15 has the full
+design/reasoning for all three):
+- ~~Rate limiting on login/upload endpoints~~ — done. `POST /api/logs/upload` and
+  `GET /api/logs/:id/summary/stream` are behind a per-IP `express-rate-limit`
+  (`apps/api/src/middleware/rate-limit.ts`). There was never a server-side login endpoint to
+  rate-limit (§14d: auth is Supabase's own `signInWithOtp`/`verifyOtp`, called directly from
+  the browser), so "login" here always meant upload's abuse surface.
+- ~~Security headers (helmet-equivalent) + CORS hardening beyond the current single-origin
+  allow~~ — done. `helmet()` (one deliberate override — `Cross-Origin-Resource-Policy:
+  cross-origin`, since apps/web/apps/api are different origins) plus CORS now explicit about
+  methods/allowed headers and `credentials: false`. See `apps/api/src/app.ts`.
+- ~~Beaconing detection (interval-regularity anomaly rule)~~ — done, the 8th rule.
+  `apps/api/src/rules/beaconing.ts` — coefficient-of-variation on inter-arrival deltas grouped
+  by (`cip`, destination host). Wired into `runRuleEngine`, the `AnomalyRuleType` union, and the
+  Anomalies tab's rule-type labels. Known, documented false-positive tradeoff: can flag
+  legitimate highly-regular polling (keep-alives, mail sync) the same way real beaconing
+  detectors do — that's what the LLM judge layer is for.
+  **Not yet live in production**: `supabase/migrations/0005_beaconing_rule_type.sql` (widens
+  `anomalies.rule_type`'s check constraint) has only been applied to local dev Postgres, by
+  deliberate choice during this session — hosted DB changes were kept as a manual, reviewed step
+  rather than something a background agent applies unattended. Until it's applied to the hosted
+  `tenexai` project, a real `beaconing` finding in production will 500 on insert. Apply it the
+  same way `0001`-`0004` were applied this session (Supabase MCP `apply_migration`, project id
+  `jjtmuqmzimpmkybojjdx`) before relying on this rule in the deployed app.
+- ~~Cloud deployment~~ — done. See "It's committed, pushed, and deployed" at the top of this file.
+
+Still genuinely deferred:
 - Password-reset-style "forgot access" flow (moot now — auth is passwordless)
+- Branded Resend sending domain (`tenexai.onziofutbol.com` per DECISIONS.md §14d) — production
+  auth currently sends from Resend's shared `onboarding@resend.dev` sandbox address, which works
+  but isn't a verified custom domain; SPF/DKIM setup is a "whenever the user wants it" follow-up.
 
 ## Take-home deliverables — status check
 
-- [x] Working app, all must-haves + bonus anomaly detection
+- [x] Working app, all must-haves + bonus anomaly detection (now 8 rules, not 7)
 - [x] README.md with setup instructions, AI-usage docs, anomaly-detection approach
 - [x] Example log files (`examples/`, plus the separate stress-test repo)
-- [ ] **GitHub repo created and shared with venkata@tenex.ai** — not done, nothing pushed anywhere
-- [ ] **Screen recording walkthrough** — not done, this is the user's own task
-- [ ] Live deploy link (optional bonus, not started)
+- [x] Live deploy link — https://tenex-soc-log-analyzer.vercel.app
+- [ ] **GitHub repo shared with venkata@tenex.ai** — repo is pushed and public
+  (`github.com/404christiann/tenex-soc-log-analyzer`), but the user has explicitly said not to
+  send it yet. Just needs the user's go-ahead, then it's a one-line email/message with the link.
+- [ ] **Screen recording walkthrough** — not done, this is the user's own task.
 
-The two unchecked items closest to done are committing + pushing to GitHub — worth raising with
-the user early in the new session, since it's the actual submission mechanism and nothing is
-backed up anywhere yet.
+The two remaining items are both the user's to actually execute (send the link, record the
+video) — nothing left here that a coding session can do unilaterally.

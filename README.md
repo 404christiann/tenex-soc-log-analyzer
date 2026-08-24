@@ -241,17 +241,21 @@ concrete, inspectable answer (a rule and a number), never just "the model said s
 
 ### Layer 1 — deterministic rule engine
 
-Seven rules run over every parsed event. Each rule assigns a **base confidence score** using
-one of two strategies, chosen per rule based on what kind of signal it is:
+Eight rules run over every parsed event (the original v1 seven, plus beaconing — added as a
+stretch item, see [Known limitations](#known-limitations) and DECISIONS.md §15). Each rule
+assigns a **base confidence score** using one of two strategies, chosen per rule based on what
+kind of signal it is:
 
 - **Fixed confidence** for direct signals — things that are already confirmed-bad, not
   inferred (e.g. a populated threat name). A statistical score would understate how sure we
   actually are.
-- **Statistical confidence** for volume/size signals — z-scores or percentiles computed
-  against *that file's own* baseline, rather than a guessed constant, so the score is
-  self-calibrating to whatever traffic pattern is in the uploaded file.
+- **Statistical confidence** for distributional signals — z-scores, percentiles, or (for
+  beaconing) a coefficient of variation, all computed against *that file's own* baseline rather
+  than a guessed constant, so the score is self-calibrating to whatever traffic pattern is in
+  the uploaded file — whether the distribution in question is request volume/size or, for
+  beaconing, inter-arrival timing.
 
-The seven rules:
+The eight rules:
 
 1. **Threat name populated** — the proxy vendor itself identified a known threat on this
    request. A confirmed-bad direct signal.
@@ -268,6 +272,12 @@ The seven rules:
 7. **Rare or scripted user-agent** — a known automation signature (`curl`, `python-requests`,
    `wget`, an empty UA) or a user-agent that's statistically rare in the file, both associated
    with reconnaissance/automation rather than a human browsing.
+8. **Beaconing (interval regularity)** — one IP hitting the same destination host at
+   suspiciously *regular* intervals (a low coefficient of variation between consecutive
+   request timestamps), the classic command-and-control check-in signature. Distinct from
+   burst-per-IP: a burst is about *volume*, a beacon is about *regularity* — a beacon doesn't
+   need to be fast, it needs to be mechanically even. See DECISIONS.md §15 for the full
+   statistical derivation and its known false-positive tradeoff.
 
 When more than one rule fires on the same event, the anomaly shows the **highest** confidence
 among them and lists every rule that triggered — not a combined/averaged score. A probabilistic
@@ -397,20 +407,31 @@ subagents working from the plan and the decisions record — including this docu
 
 ## Known limitations
 
-**Consciously deferred, not forgotten** (see DECISIONS.md for the reasoning behind each):
+**Consciously deferred, not forgotten** (see DECISIONS.md for the reasoning behind each).
+Three of the four originally-listed stretch items are now implemented (DECISIONS.md §15):
 
-- **Rate limiting** on the upload endpoint. (Sign-in is no longer a gap: the passwordless flow
-  inherits Supabase Auth's built-in OTP send/verify rate limits.)
-- **Hardened security headers and CORS.** CORS is currently basic and functional — locked to a
-  single configurable frontend origin, not a wildcard — but the fuller stretch item (a
-  helmet-equivalent security-headers pass, per-environment origin allowlisting) hasn't been
-  done yet.
-- **Cloud deployment.** The plan (Vercel for the frontend, Render for the backend, Supabase
-  already cloud-hosted) is written but not yet executed, including a known, unresolved risk
-  around Render's free tier cold-starting after idle.
-- **Beaconing detection** (an 8th anomaly rule — interval-regularity across grouped events,
-  e.g. a compromised host calling home on a fixed cadence) was scoped out of v1 as meaningfully
-  more complex than the other seven rules.
+- ~~Rate limiting on the upload endpoint~~ — **done.** `POST /api/logs/upload` and
+  `GET /api/logs/:id/summary/stream` (the two expensive/abusable routes — the second makes a
+  real, billed LLM call on a cache miss) are both behind a per-IP `express-rate-limit`
+  (`apps/api/src/middleware/rate-limit.ts`). Sign-in was never a gap here — the passwordless
+  flow inherits Supabase Auth's own built-in OTP send/verify rate limits, and there is no
+  server-side login endpoint in this API to rate-limit in the first place (auth is
+  `signInWithOtp`/`verifyOtp`, called directly from the browser against Supabase's hosted Auth
+  service).
+- ~~Hardened security headers and CORS~~ — **done.** `helmet()` (with one deliberate override —
+  `Cross-Origin-Resource-Policy: cross-origin`, since apps/web and apps/api are different
+  origins even in local dev) plus CORS explicit about methods (`GET`/`POST` only), allowed
+  headers (`Content-Type`/`Authorization` only), and `credentials: false` (there is no
+  cookie-based session crossing this boundary — every request carries a Bearer token instead,
+  confirmed against `apps/web/src/lib/api.ts`). See `apps/api/src/app.ts`.
+- **Cloud deployment** — still deferred. The plan (Vercel for the frontend, Render for the
+  backend, Supabase already cloud-hosted) is written but not yet executed, including a known,
+  unresolved risk around Render's free tier cold-starting after idle.
+- ~~Beaconing detection~~ — **done**, the 8th anomaly rule. See the rule list above and
+  DECISIONS.md §15 for the interval-regularity/coefficient-of-variation design and its known
+  false-positive tradeoff (it can flag legitimate, highly-regular polling traffic — e.g.
+  streaming keep-alives, mail sync — the same way real beaconing detectors do; triaging that
+  is exactly what the bounded LLM judge layer is for).
 
 ---
 

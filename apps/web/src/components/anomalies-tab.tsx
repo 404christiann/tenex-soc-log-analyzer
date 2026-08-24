@@ -32,6 +32,7 @@ const RULE_TYPE_LABELS: Record<Anomaly["ruleType"], string> = {
   repeated_blocked: "Repeated blocked",
   off_hours: "Off-hours access",
   rare_scripted_user_agent: "Rare/scripted UA",
+  beaconing: "Beaconing (C2 interval)",
 };
 
 const SEVERITY_ORDER: Severity[] = ["high", "medium", "low"];

@@ -112,3 +112,45 @@ export const THREATNAME_CONFIDENCE = 95;
 
 /** Access to one of the 4 high-risk url categories: also a confirmed-bad direct signal (DECISIONS.md §14a: "fixed 90"). */
 export const MALWARE_CATEGORY_CONFIDENCE = 90;
+
+// ---------------------------------------------------------------------------
+// Beaconing (interval-regularity — the 8th rule, deferred from v1 per §3/§14,
+// now implemented per DECISIONS.md §15)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimum requests from one (cip, destination host) pair before the
+ * beaconing rule computes anything — this yields >= 5 inter-arrival deltas,
+ * the same "too few samples = skip, not false-flag" floor philosophy as
+ * `EXFIL_MIN_SAMPLES` above (DECISIONS.md §14a): with fewer points, "the
+ * deltas happen to look even" is indistinguishable from coincidence.
+ */
+export const BEACONING_MIN_SAMPLES = 6;
+
+/**
+ * Below this mean inter-arrival delta, a tight cluster of requests to the
+ * same destination is almost certainly a browser retry/prefetch burst or a
+ * rapid double-click — not a beacon interval — and is skipped regardless of
+ * how low its variance is (the "near-zero deltas" degenerate case).
+ */
+export const BEACONING_MIN_MEAN_DELTA_MS = 2_000;
+
+/**
+ * Coefficient-of-variation (stddev / mean of inter-arrival deltas)
+ * threshold: at/below this, the timing is "suspiciously regular" enough to
+ * flag as a candidate beacon. CV is scale-free (unlike raw stddev), so one
+ * threshold works whether the beacon interval is 5s or 5 minutes. Normal
+ * human/application traffic to the same destination is comfortably above
+ * this — deliberate, timer-driven check-ins are the outlier case this rule
+ * targets.
+ */
+export const BEACONING_CV_LOOSE_THRESHOLD = 0.15;
+
+/** CV at/below which confidence saturates at its ceiling — near-perfect regularity, a textbook fixed-interval C2 beacon. */
+export const BEACONING_CV_TIGHT_THRESHOLD = 0.02;
+
+/** Confidence right at the loose CV threshold (weakest still-flagged regularity, mirroring how the other rules define their "just cleared the floor" confidence). */
+export const BEACONING_CONFIDENCE_AT_LOOSE = 55;
+
+/** Confidence at/below the tight CV threshold (near-perfect regularity). */
+export const BEACONING_CONFIDENCE_AT_TIGHT = 95;

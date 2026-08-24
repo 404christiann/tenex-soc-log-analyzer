@@ -1,4 +1,5 @@
 import type { Anomaly, LogEvent } from "@tenex/shared";
+import { beaconingRule } from "./beaconing";
 import { burstPerIpRule } from "./burst-per-ip";
 import { exfilBytesRule } from "./exfil-bytes";
 import { malwareCategoryRule } from "./malware-category";
@@ -9,7 +10,9 @@ import { threatNameRule } from "./threat-name";
 import type { RuleCandidate } from "./types";
 
 /**
- * Runs all seven v1 deterministic rule modules (DECISIONS.md §3, §14a) over
+ * Runs all eight deterministic rule modules — the original v1 seven
+ * (DECISIONS.md §3, §14a) plus `beaconingRule`, the interval-regularity
+ * detector deferred out of v1 and implemented as a stretch item (§15) — over
  * the full parsed event set and merges the results into `Anomaly[]`.
  *
  * Each rule module gets the *entire* file (not a slice), since several rules
@@ -39,6 +42,7 @@ export function runRuleEngine(events: LogEvent[]): Anomaly[] {
     ...repeatedBlockedRule(events),
     ...offHoursRule(events),
     ...rareUserAgentRule(events),
+    ...beaconingRule(events),
   ];
 
   const byEventIndex = new Map<number, RuleCandidate[]>();

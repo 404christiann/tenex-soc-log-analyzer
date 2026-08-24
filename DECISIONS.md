@@ -549,3 +549,123 @@ serverless timeout is too tight for the ~20-25s synchronous processing chain) + 
 start on the next request — risky if the recruiter clicks the live link cold. Flagged for
 later (keep-alive ping, paid tier, or switch to Fly.io) — intentionally not solved now since
 deployment itself is in the deferred bucket.
+
+## 15. Three of the four §5/§14 stretch items implemented: rate limiting, security headers/CORS, beaconing detection
+
+Picked up as a post-v1 pass, independent of §14's still-deferred cloud deployment. All three
+follow the same guiding principle established throughout this doc — don't hand-roll a security
+or statistics primitive when a well-reviewed library/technique already gets the edge cases
+right (§7's Supabase Auth call, §3's LLM-judge gate) — applied here to a rate-limiting library,
+a security-headers middleware, and a scale-free statistical measure, respectively.
+
+**Rate limiting — `express-rate-limit`, per-IP, on the two genuinely expensive/abusable routes.**
+Not every route: `POST /api/logs/upload` (parses a file, runs all 8 rule modules, then makes a
+real billed Anthropic call for the judge — plus the only route writing to Storage/DB) and
+`GET /api/logs/:id/summary/stream` (cheap on a cache hit, but a real streamed Anthropic call
+plus a full event re-page on a miss) are the two routes where a tight loop actually costs money
+or resources; every other route is a plain authenticated Postgres read, no different from any
+CRUD endpoint. Per-IP rather than per-user: `express-rate-limit`'s default IP-based keying
+bounds load/spend from one source regardless of auth state, and a per-user quota would be
+trivially bypassable by creating a new (free) Supabase account. Numbers picked for a
+single-user take-home demo, not production SaaS — generous enough that a reviewer clicking
+through the four example files and revisiting the Timeline tab never gets close (20
+uploads / 15 min, 30 summary-stream requests / 15 min), tight enough to visibly stop a
+scripted loop. Upload's limiter runs **before** `requireAuth` in the route chain — an
+unauthenticated flood shouldn't get a free pass on JWT-verification cost just because it'll
+401 anyway. **No separate login-endpoint limiter, and that's not a gap:** §14d's passwordless
+overhaul means there is no server-side login route in this Express API to rate-limit at all —
+`signInWithOtp`/`verifyOtp` are called directly from the browser against Supabase's own hosted
+Auth service, which already enforces its own OTP send/verify rate limits server-side.
+Implementation: `apps/api/src/middleware/rate-limit.ts`, wired into
+`apps/api/src/routes/logs.ts`; error body matches `middleware/error-handler.ts`'s existing
+`{ error: string }` shape (a 429 shouldn't look like a different API), and `RateLimit-*`
+(not the legacy `X-RateLimit-*`) response headers are used.
+
+**Security headers — `helmet()`, one deliberate override.** Applied with its full default set
+(HSTS, `X-Content-Type-Options: nosniff`, frame-ancestors, a locked-down default CSP, etc.) —
+this API is pure JSON/SSE with no HTML of its own to render, so almost none of it needs
+tuning. The one override, `crossOriginResourcePolicy: { policy: "cross-origin" }`: helmet's
+default `Cross-Origin-Resource-Policy: same-origin` tells the *browser* to refuse to expose a
+response to a different-origin page even when the `cors` middleware below explicitly allowed
+it via `Access-Control-Allow-Origin` — and apps/web calling apps/api is exactly that
+cross-origin case, in local dev and in the §14 Vercel+Render plan alike. Verified empirically
+(not just read off the docs): the unmodified default measurably broke the real upload/summary
+calls from apps/web before the override was added. The CORS allowlist below is what's actually
+gating who can read these responses, so CORP's blunter same-origin default would only have
+broken the legitimate frontend.
+
+**CORS — hardened beyond §5's "single-origin allow" starting point.** Still one configurable
+origin via `FRONTEND_ORIGIN` (never a wildcard, which would silently undercut the RLS/JWT auth
+model), now additionally explicit about `methods` (`GET`/`POST` only — the `cors` package's
+default otherwise reflects every method in the preflight response) and `allowedHeaders`
+(`Content-Type`, `Authorization` — nothing else this API reads). `credentials` flipped from the
+original `true` to **`false`**, checked against how `apps/web/src/lib/api.ts` actually calls
+this API: every request carries its Supabase access token as an explicit
+`Authorization: Bearer <token>` header, never `fetch(..., { credentials: "include" })` or an
+ambient cookie — Supabase's own session cookie lives on the Next.js origin only
+(`lib/supabase/middleware.ts`) and is never sent to this Express API. `credentials: true` was a
+leftover from an earlier, more permissive draft, not a real requirement; turning it off is a
+strict tightening (the browser now refuses to expose responses to a cross-origin page even
+under a forced credentialed request) with zero effect on the app's real Bearer-token-only call
+pattern. Both changes live in `apps/api/src/app.ts`.
+
+**Beaconing detection — the 8th deterministic rule, interval-regularity via coefficient of
+variation.** Deferred out of v1 in §3 as "meaningfully more complex than the other seven";
+implemented as `apps/api/src/rules/beaconing.ts`, wired into `runRuleEngine` alongside the
+original seven (`apps/api/src/rules/engine.ts`).
+
+- **Signal:** a compromised host phoning home to a C2 server on a fixed timer produces a tight,
+  low-variance sequence of inter-arrival deltas to the same destination — a pattern normal
+  human/application traffic essentially never produces, since real usage is bursty and
+  irregular. Deliberately a different detection axis from `burst-per-ip` (§14a): a burst is
+  about *volume* (too many requests in a window); a beacon is about *regularity* (a suspiciously
+  even cadence, independent of volume — a beacon every 5 minutes is still a beacon).
+- **Grouping:** events are grouped by (`cip`, destination host), host extracted from `url` via
+  `new URL(...).hostname` with a raw-string fallback if it doesn't parse. Grouping by host
+  rather than the full `url` deliberately tolerates path/query variation across check-ins (an
+  attacker varying `/beacon?id=1`, `/beacon?id=2`, ... shouldn't split into separate,
+  under-threshold groups).
+- **Sample floor:** `BEACONING_MIN_SAMPLES = 6` (≥5 inter-arrival deltas) before computing
+  anything — the same "too few samples = skip, not false-flag" floor philosophy as
+  `EXFIL_MIN_SAMPLES` (§14a): with 2-3 points, "the deltas happen to look even" is
+  indistinguishable from coincidence.
+- **The statistic — coefficient of variation (CV = stddev / mean of consecutive inter-arrival
+  deltas), not raw stddev.** CV is scale-free: a beacon every 5s with ±0.5s jitter and a beacon
+  every 5min with ±30s jitter are *equally* regular (CV = 0.1 either way), but their raw
+  stddevs differ by two orders of magnitude — one CV threshold works across every timescale,
+  where a raw-stddev threshold would need per-timescale tuning. Same "self-calibrating against
+  a dataset property, not a guessed constant" philosophy as burst-per-ip's p99 and exfil's
+  z-score (§14a), applied to timing variance instead of a count/byte distribution. New scaling
+  helper `scaleInverseThresholdConfidence` (`apps/api/src/rules/stats.ts`) is the mirror image
+  of the existing `scaleExfilConfidence`: confidence rises as the statistic *falls* (tighter CV
+  = more suspicious), the opposite ramp direction from every prior statistical rule, which is
+  why it's a new function rather than a reused one.
+- **Degenerate-case filter:** groups whose mean delta is under `BEACONING_MIN_MEAN_DELTA_MS`
+  (2s) are skipped regardless of how low their CV is — a tight cluster of sub-2s requests is a
+  browser retry/prefetch burst or a rapid double-click, not a beacon interval, and network-stack
+  retries are often nearly as mechanically regular as a real timer, so the CV check alone
+  wouldn't exclude them.
+- **Thresholds (`apps/api/src/rules/config.ts`):** flag when CV ≤ `BEACONING_CV_LOOSE_THRESHOLD`
+  (0.15); confidence scales from 55 at that loose edge up to 95 at/below
+  `BEACONING_CV_TIGHT_THRESHOLD` (0.02, near-perfect regularity) via
+  `scaleInverseThresholdConfidence`. Every event in a flagged group is flagged, not just one
+  representative — the same "flag every participant" convention `burst-per-ip`/
+  `repeated-blocked` already use, since every request in the beacon sequence is equally part of
+  the evidence.
+- **Known false-positive tradeoff, documented rather than hidden:** this is the same tradeoff
+  every real beaconing detector has — legitimate, highly-regular polling traffic (streaming
+  keep-alives, mail sync, a monitoring agent's own health-check heartbeat) can look statistically
+  identical to a C2 check-in from timing alone. Not solved here, on purpose: triaging "regular
+  because it's malware" vs. "regular because it's a keep-alive" is exactly the kind of
+  open-ended, context-dependent judgment call §3 designed the bounded LLM judge layer to make
+  (e.g. recognizing a known SaaS/CDN domain vs. an unrecognized one) — the deterministic rule's
+  job is to surface the candidate, not adjudicate it alone.
+- **Schema:** `'beaconing'` added to `packages/shared/src/anomaly.ts`'s
+  `AnomalyRuleTypeSchema` (the Zod source of truth) and to the frontend's
+  `RULE_TYPE_LABELS` map (`apps/web/src/components/anomalies-tab.tsx`, labeled "Beaconing (C2
+  interval)"). The corresponding Postgres check-constraint widening
+  (`supabase/migrations/0005_beaconing_rule_type.sql`, same drop-then-recreate pattern
+  `0004_summary_pending.sql` used) is applied to the **local** dev Supabase instance only
+  (required for `logs.integration.test.ts` to pass once the engine started producing real
+  `beaconing` rows against `quick-demo.log`) — **not** applied to any hosted/remote Supabase
+  project, which stays the user's call.

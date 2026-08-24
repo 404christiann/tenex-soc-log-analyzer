@@ -11,6 +11,7 @@ import { rareUserAgentRule } from "./rare-user-agent";
 import { repeatedBlockedRule } from "./repeated-blocked";
 import { threatNameRule } from "./threat-name";
 import { malwareCategoryRule } from "./malware-category";
+import { beaconingRule } from "./beaconing";
 
 const EXAMPLES_DIR = path.resolve(__dirname, "../../../../examples");
 
@@ -303,6 +304,159 @@ describe("malwareCategoryRule (unit)", () => {
     expect(candidates).toHaveLength(1);
     expect(candidates[0].eventIndex).toBe(0);
     expect(candidates[0].confidence).toBe(90);
+  });
+});
+
+describe("beaconingRule (unit) — DECISIONS.md §15", () => {
+  /** Builds `count` events from `cip` to `url`, spaced `deltasSeconds[i]` apart (seconds), starting at `startIso`. `deltasSeconds.length` must be `count - 1`. */
+  function makeBeaconGroup(overrides: {
+    cip: string;
+    url: string;
+    startIso: string;
+    deltasSeconds: number[];
+  }): LogEvent[] {
+    const events: LogEvent[] = [];
+    let elapsedSeconds = 0;
+    events.push(makeEvent({ cip: overrides.cip, url: overrides.url, datetime: overrides.startIso }));
+    for (const delta of overrides.deltasSeconds) {
+      elapsedSeconds += delta;
+      events.push(
+        makeEvent({
+          cip: overrides.cip,
+          url: overrides.url,
+          datetime: isoPlusSeconds(overrides.startIso, elapsedSeconds),
+        }),
+      );
+    }
+    return events;
+  }
+
+  it("flags a perfectly-regular 6-request beacon (CV=0) at the confidence ceiling (95)", () => {
+    const events = makeBeaconGroup({
+      cip: "10.9.50.1",
+      url: "https://evil-c2.example/beacon",
+      startIso: "2026-01-05T09:00:00Z",
+      deltasSeconds: [60, 60, 60, 60, 60], // 6 requests, 5 identical 60s deltas
+    });
+    const candidates = beaconingRule(events);
+    expect(candidates).toHaveLength(6);
+    expect(candidates.every((c) => c.ruleType === "beaconing")).toBe(true);
+    expect(candidates.every((c) => c.confidence === 95)).toBe(true);
+    expect(candidates.every((c) => c.eventIndex >= 0 && c.eventIndex < 6)).toBe(true);
+  });
+
+  it("does not flag below the BEACONING_MIN_SAMPLES floor (5 requests, still perfectly regular)", () => {
+    const events = makeBeaconGroup({
+      cip: "10.9.50.2",
+      url: "https://evil-c2.example/beacon",
+      startIso: "2026-01-05T09:00:00Z",
+      deltasSeconds: [60, 60, 60, 60], // 5 requests — one short of the floor of 6
+    });
+    expect(beaconingRule(events)).toEqual([]);
+  });
+
+  it("does not flag a degenerate rapid-fire cluster (sub-2s mean delta) even though CV=0", () => {
+    const events = makeBeaconGroup({
+      cip: "10.9.50.3",
+      url: "https://example.com/asset.js",
+      startIso: "2026-01-05T09:00:00Z",
+      deltasSeconds: [1, 1, 1, 1, 1], // 6 requests, 1s apart — a rapid-fire/retry burst, not a beacon
+    });
+    expect(beaconingRule(events)).toEqual([]);
+  });
+
+  it("does not flag normal jittery traffic (CV above the loose threshold)", () => {
+    const events = makeBeaconGroup({
+      cip: "10.9.50.4",
+      url: "https://news.example/feed",
+      startIso: "2026-01-05T09:00:00Z",
+      // Mean 60s, highly irregular — CV well above 0.15.
+      deltasSeconds: [20, 95, 40, 130, 15],
+    });
+    expect(beaconingRule(events)).toEqual([]);
+  });
+
+  it("scales confidence inversely with CV — tighter regularity scores strictly higher", () => {
+    const tight = makeBeaconGroup({
+      cip: "10.9.50.5",
+      url: "https://evil-c2.example/beacon",
+      startIso: "2026-01-05T09:00:00Z",
+      deltasSeconds: [60, 60, 60, 60, 60], // CV = 0
+    });
+    const midJitter = makeBeaconGroup({
+      cip: "10.9.50.6",
+      url: "https://evil-c2.example/beacon",
+      startIso: "2026-01-05T09:00:00Z",
+      deltasSeconds: [55, 58, 60, 62, 65], // mean 60s, CV ≈ 0.057 — still under the 0.15 loose threshold
+    });
+    const looseJitter = makeBeaconGroup({
+      cip: "10.9.50.7",
+      url: "https://evil-c2.example/beacon",
+      startIso: "2026-01-05T09:00:00Z",
+      deltasSeconds: [51, 55, 60, 65, 69], // mean 60s, CV ≈ 0.10 — closer to the loose threshold
+    });
+
+    const tightConfidence = beaconingRule(tight)[0].confidence;
+    const midConfidence = beaconingRule(midJitter)[0].confidence;
+    const looseConfidence = beaconingRule(looseJitter)[0].confidence;
+
+    expect(tightConfidence).toBe(95);
+    expect(midConfidence).toBeGreaterThan(looseConfidence);
+    expect(looseConfidence).toBeGreaterThan(55);
+    expect(looseConfidence).toBeLessThan(midConfidence);
+    expect(midConfidence).toBeLessThan(tightConfidence);
+  });
+
+  it("groups by (cip, destination host) independently — interleaved traffic to two hosts from one IP doesn't merge into one group", () => {
+    const cip = "10.9.50.8";
+    const start = "2026-01-05T09:00:00Z";
+    // 3 regular requests to host A and 3 to host B, interleaved — each host
+    // only reaches 3 requests (below the floor of 6), so neither group
+    // should fire even though the combined cip traffic looks "beacon-like."
+    const events: LogEvent[] = [];
+    for (let i = 0; i < 3; i++) {
+      events.push(makeEvent({ cip, url: "https://a.example/", datetime: isoPlusSeconds(start, i * 120) }));
+      events.push(makeEvent({ cip, url: "https://b.example/", datetime: isoPlusSeconds(start, i * 120 + 60) }));
+    }
+    expect(beaconingRule(events)).toEqual([]);
+  });
+
+  it("groups by (cip, destination host) independently — same host from two different IPs doesn't merge", () => {
+    const url = "https://evil-c2.example/beacon";
+    const start = "2026-01-05T09:00:00Z";
+    const eventsA = makeBeaconGroup({ cip: "10.9.50.9", url, startIso: start, deltasSeconds: [60, 60, 60] }); // 4 requests
+    const eventsB = makeBeaconGroup({ cip: "10.9.50.10", url, startIso: start, deltasSeconds: [60, 60, 60] }); // 4 requests
+    // Neither IP alone reaches the 6-request floor.
+    expect(beaconingRule([...eventsA, ...eventsB])).toEqual([]);
+  });
+
+  it("normalizes the destination by hostname — path/query variation across beacon check-ins still groups together", () => {
+    const cip = "10.9.50.11";
+    const start = "2026-01-05T09:00:00Z";
+    const paths = ["/beacon?id=1", "/checkin", "/beacon?id=2", "/ping", "/beacon?id=3", "/status"];
+    const events = paths.map((path, i) =>
+      makeEvent({ cip, url: `https://evil-c2.example${path}`, datetime: isoPlusSeconds(start, i * 60) }),
+    );
+    const candidates = beaconingRule(events);
+    expect(candidates).toHaveLength(6);
+    expect(candidates.every((c) => c.confidence === 95)).toBe(true);
+  });
+});
+
+describe("engine — beaconing rule wired into runRuleEngine", () => {
+  it("surfaces a beaconing anomaly through the full engine, ruleType='beaconing'", () => {
+    const cip = "10.9.60.1";
+    const start = "2026-01-05T09:00:00Z";
+    const events: LogEvent[] = [];
+    for (let i = 0; i < 6; i++) {
+      events.push(
+        makeEvent({ cip, url: "https://evil-c2.example/beacon", datetime: isoPlusSeconds(start, i * 60) }),
+      );
+    }
+    const anomalies = runRuleEngine(events);
+    expect(anomalies).toHaveLength(6);
+    expect(anomalies.every((a) => a.ruleType === "beaconing")).toBe(true);
+    expect(anomalies.every((a) => a.baseConfidence === 95)).toBe(true);
   });
 });
 
