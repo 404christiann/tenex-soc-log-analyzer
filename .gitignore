@@ -50,3 +50,4 @@ apps/web/playwright/.cache
 
 # design-exploration git worktrees (not part of the deliverable)
 .claude/worktrees
+.env*
