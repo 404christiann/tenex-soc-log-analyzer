@@ -119,13 +119,9 @@ design/reasoning for all three):
   Anomalies tab's rule-type labels. Known, documented false-positive tradeoff: can flag
   legitimate highly-regular polling (keep-alives, mail sync) the same way real beaconing
   detectors do — that's what the LLM judge layer is for.
-  **Not yet live in production**: `supabase/migrations/0005_beaconing_rule_type.sql` (widens
-  `anomalies.rule_type`'s check constraint) has only been applied to local dev Postgres, by
-  deliberate choice during this session — hosted DB changes were kept as a manual, reviewed step
-  rather than something a background agent applies unattended. Until it's applied to the hosted
-  `tenexai` project, a real `beaconing` finding in production will 500 on insert. Apply it the
-  same way `0001`-`0004` were applied this session (Supabase MCP `apply_migration`, project id
-  `jjtmuqmzimpmkybojjdx`) before relying on this rule in the deployed app.
+  `supabase/migrations/0005_beaconing_rule_type.sql` (widens `anomalies.rule_type`'s check
+  constraint) is applied to both local dev Postgres and the hosted `tenexai` project
+  (`jjtmuqmzimpmkybojjdx`) — live end to end.
 - ~~Cloud deployment~~ — done. See "It's committed, pushed, and deployed" at the top of this file.
 
 Still genuinely deferred:

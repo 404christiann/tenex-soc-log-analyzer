@@ -21,12 +21,12 @@
 -- packages/shared/src/anomaly.ts's AnomalyRuleTypeSchema (the Zod source of
 -- truth the API/frontend both import) already includes 'beaconing' — this
 -- migration is what lets a real 'beaconing' row actually persist in Postgres
--- instead of failing that check constraint. Applied to the local dev
--- Supabase instance only (required to get `logs.integration.test.ts` green
--- again once the rule engine started producing 'beaconing' anomalies —
--- without it, the full-suite `quick-demo.log` upload test failed 500 on
--- `anomalies_rule_type_check`). NOT applied to any hosted/remote Supabase
--- project — that stays the user's call, per this task's ground rules.
+-- instead of failing that check constraint. Applied to local dev Postgres
+-- first (required to get `logs.integration.test.ts` green again once the
+-- rule engine started producing 'beaconing' anomalies — without it, the
+-- full-suite `quick-demo.log` upload test failed 500 on
+-- `anomalies_rule_type_check`), then to the hosted `tenexai` project
+-- (`jjtmuqmzimpmkybojjdx`) as a deliberate, reviewed follow-up step.
 -- =============================================================================
 
 alter table public.anomalies

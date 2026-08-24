@@ -665,7 +665,6 @@ original seven (`apps/api/src/rules/engine.ts`).
   `RULE_TYPE_LABELS` map (`apps/web/src/components/anomalies-tab.tsx`, labeled "Beaconing (C2
   interval)"). The corresponding Postgres check-constraint widening
   (`supabase/migrations/0005_beaconing_rule_type.sql`, same drop-then-recreate pattern
-  `0004_summary_pending.sql` used) is applied to the **local** dev Supabase instance only
-  (required for `logs.integration.test.ts` to pass once the engine started producing real
-  `beaconing` rows against `quick-demo.log`) — **not** applied to any hosted/remote Supabase
-  project, which stays the user's call.
+  `0004_summary_pending.sql` used) is applied to both local dev Postgres (required for
+  `logs.integration.test.ts` to pass once the engine started producing real `beaconing` rows
+  against `quick-demo.log`) and the hosted `tenexai` project (`jjtmuqmzimpmkybojjdx`).
