@@ -27,6 +27,10 @@ For the full reasoning behind every decision below — including ones this READM
 summarizes — see [`DECISIONS.md`](./DECISIONS.md), the running record of the architecture
 interview this project was designed from before any code was written.
 
+**Live demo:** https://tenex-soc-log-analyzer.vercel.app — sign in with any email (a real
+6-digit code gets sent), then upload one of the files from [`examples/`](./examples/). No local
+setup required to try it; the local-setup instructions below are for running/modifying the code.
+
 ---
 
 ## Local setup
@@ -424,9 +428,9 @@ Three of the four originally-listed stretch items are now implemented (DECISIONS
   headers (`Content-Type`/`Authorization` only), and `credentials: false` (there is no
   cookie-based session crossing this boundary — every request carries a Bearer token instead,
   confirmed against `apps/web/src/lib/api.ts`). See `apps/api/src/app.ts`.
-- **Cloud deployment** — still deferred. The plan (Vercel for the frontend, Render for the
-  backend, Supabase already cloud-hosted) is written but not yet executed, including a known,
-  unresolved risk around Render's free tier cold-starting after idle.
+- ~~Cloud deployment~~ — **done.** Frontend on Vercel, backend on Render, Supabase already
+  cloud-hosted (DECISIONS.md §14). Render's free-tier cold-start risk is mitigated with an
+  external keep-alive ping (cron-job.org, every 10 minutes) rather than left unresolved.
 - ~~Beaconing detection~~ — **done**, the 8th anomaly rule. See the rule list above and
   DECISIONS.md §15 for the interval-regularity/coefficient-of-variation design and its known
   false-positive tradeoff (it can flag legitimate, highly-regular polling traffic — e.g.
