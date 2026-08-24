@@ -33,7 +33,7 @@ const authButtonBase = "h-auto w-full rounded-[8px] px-5 py-4 text-base font-bol
 export function AuthPrimaryButton({ className, ...props }: React.ComponentProps<typeof Button>) {
   return (
     <Button
-      className={cn(authButtonBase, "bg-blue-600 text-white hover:bg-blue-700", className)}
+      className={cn(authButtonBase, "bg-[#62d6e5] text-slate-800 hover:bg-[#53b6c3]", className)}
       {...props}
     />
   );

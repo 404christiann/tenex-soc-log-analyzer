@@ -237,8 +237,7 @@ function LoginForm() {
       {logo}
       <h1 className="mt-6 text-center text-3xl font-bold text-slate-800">Sign in</h1>
       <p className="mt-3 text-center text-slate-500">
-        Enter your email and we&apos;ll send you a 6-digit code — no password needed. New here?
-        Same flow: your account is created on first sign-in.
+        Enter your email and we&apos;ll send you a 6-digit code to sign in. No password required.
       </p>
       <form onSubmit={handleEmailSubmit} className="mt-10 flex flex-col gap-4 sm:mt-12">
         {error && (
