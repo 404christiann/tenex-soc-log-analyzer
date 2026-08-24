@@ -149,9 +149,9 @@ function LoginForm() {
     <Image
       src="/tenex-logo.png"
       alt="Tenex logo"
-      width={48}
-      height={48}
-      className="mx-auto size-12 rounded-lg"
+      width={64}
+      height={64}
+      className="mx-auto size-16 rounded-lg"
       priority
     />
   );
