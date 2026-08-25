@@ -170,6 +170,15 @@ API key must never be committed to this repo or any env file:
    code instead of a magic-link URL (the local equivalents live in
    `supabase/templates/otp_code.html`, wired up in `supabase/config.toml`).
 
+> **Gotcha, found on the live deploy:** if step 2's **Sender email** is left at Resend's
+> shared sandbox default (`onboarding@resend.dev`) instead of an address on the verified
+> domain, sign-in *appears* configured (custom SMTP is on, no rate-limit error) but fails
+> for any email except the Resend account's own — Resend restricts that sandbox address to
+> delivering only to its account owner. The symptom is a generic `Error sending confirmation
+> email` (a 500 from Supabase Auth, not a 429 rate limit) for every other recipient. Fix:
+> make sure Sender email is actually set to an address on the verified domain, not the
+> sandbox default — this cost real debugging time when it wasn't.
+
 ### 5. Run the dev servers
 
 Two terminals, from the repo root:
