@@ -28,6 +28,18 @@ export function getAuthErrorMessage(error: AuthError): string {
   ) {
     return "Too many attempts — please wait a moment and try again.";
   }
+  // GoTrue's mail-send failure ("Error sending confirmation email" / "Error
+  // sending magic link email") — thrown when its configured SMTP provider
+  // (Resend, per README.md §4b) fails server-side, e.g. a bad/expired API
+  // key or lapsed domain verification. GoTrue reports this under the same
+  // generic `unexpected_failure` code as many unrelated internal errors, so
+  // that code isn't a reliable signal here — match on the message instead.
+  if (
+    message.includes("error sending confirmation email") ||
+    message.includes("error sending magic link email")
+  ) {
+    return "We couldn't send your code right now — this is usually temporary. Please try again in a few minutes.";
+  }
   if (message.includes("signups not allowed")) {
     return "New sign-ups are currently disabled.";
   }
