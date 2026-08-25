@@ -5,7 +5,7 @@ import { getServiceRoleClient, getUserScopedClient } from "../db/supabase";
 import { toAnomaly, toStoredLogEvent, type AnomalyRow, type LogEventRow, type LogFileRow } from "../db/mappers";
 import { HttpError } from "../errors";
 import { isAnthropicConfigured } from "../llm/client";
-import { generateFallbackSummary, streamSummary } from "../llm/summary";
+import { generateFallbackSummary, streamSummary, type SummaryResult } from "../llm/summary";
 import { fetchOwnedFile } from "./logs";
 import { FileIdParamsSchema } from "./schemas";
 
@@ -30,6 +30,20 @@ import { FileIdParamsSchema } from "./schemas";
 
 /** SSE connections outlive the default socket timeout; a real generation is ~10-30s, so cap generously rather than disabling timeouts entirely. */
 const SUMMARY_STREAM_TIMEOUT_MS = 120_000;
+
+/**
+ * In-process dedup for concurrent first-time summary requests on the same
+ * file. Without this, two requests that both race past the "does a summary
+ * already exist" check before either persists would each kick off an
+ * independent, separately-billed Anthropic call. Single Node process, no
+ * horizontal scaling (see DECISIONS.md — nothing in the deployment story
+ * here implies multiple instances), so a simple module-level map of
+ * in-flight generation promises is sufficient; no cross-process locking
+ * needed. Entries are removed once their generation settles, so a later,
+ * genuinely sequential request goes through the normal
+ * existence-check/regenerate path untouched.
+ */
+const inFlightSummaryGenerations = new Map<string, Promise<SummaryResult>>();
 
 /** PostgREST caps a single select at 1000 rows — page through log_events in chunks of this size to rebuild the full event list for prompt grounding. */
 const EVENT_FETCH_PAGE_SIZE = 1000;
@@ -228,14 +242,44 @@ export async function handleSummaryStream(req: Request, res: Response): Promise<
   }
 
   // --- Live generation ---
-  // If the client disconnects mid-generation, further SSE writes become
-  // no-ops (writeSseEvent guards on writableEnded/destroyed via the closed
-  // response) but generation is allowed to finish and persist — so the
-  // result is cached for the reconnect rather than re-billed.
-  const result = await streamSummary(events, anomalies, {
-    onThinkingDelta: (delta) => writeSseEvent(res, { type: "thinking", delta }),
-    onTextDelta: (delta) => writeSseEvent(res, { type: "text", delta }),
-  });
+  // Dedup: only the first request to reach here for a given file id actually
+  // starts (and streams deltas for) a real generation. A concurrent second
+  // request for the same file id awaits that same in-flight promise instead
+  // of calling streamSummary itself — otherwise both would pass the
+  // existence check above before either persists, and both would trigger a
+  // separately-billed Anthropic call.
+  const isLeader = !inFlightSummaryGenerations.has(id);
+  let generation = inFlightSummaryGenerations.get(id);
+  if (!generation) {
+    // If the client disconnects mid-generation, further SSE writes become
+    // no-ops (writeSseEvent guards on writableEnded/destroyed via the closed
+    // response) but generation is allowed to finish and persist — so the
+    // result is cached for the reconnect rather than re-billed.
+    generation = streamSummary(events, anomalies, {
+      onThinkingDelta: (delta) => writeSseEvent(res, { type: "thinking", delta }),
+      onTextDelta: (delta) => writeSseEvent(res, { type: "text", delta }),
+    }).finally(() => {
+      inFlightSummaryGenerations.delete(id);
+    });
+    inFlightSummaryGenerations.set(id, generation);
+  }
+  const result = await generation;
+
+  // A follower didn't drive this generation's deltas (they belong to the
+  // leader's own SSE connection) — it just replays the settled outcome, the
+  // same shape as the cached-replay path above, once the leader's call
+  // finishes.
+  if (!isLeader) {
+    writeSseEvent(res, {
+      type: "done",
+      summary: result.markdown,
+      status: result.status.status === "failed" ? "failed" : "ok",
+      ...(result.status.status === "failed" && result.status.reason ? { reason: result.status.reason } : {}),
+      cached: true,
+    });
+    res.end();
+    return;
+  }
 
   if (result.status.status === "failed") {
     writeSseEvent(res, { type: "failed", reason: result.status.reason ?? "Unknown error" });

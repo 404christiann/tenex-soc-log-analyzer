@@ -116,6 +116,24 @@ function toUtcParts(iso: string): UtcParts | null {
   };
 }
 
+/**
+ * Single-timestamp UTC formatter shared by the Events and Anomalies tabs
+ * (`Aug 24, 14:23:05 UTC`) — same month-short/day/24h-with-seconds shape
+ * those tabs' local `formatTimestamp` helpers used to produce, computed from
+ * the ISO string's UTC representation (never `Date`-to-local conversion,
+ * per this module's UTC stance above) and labeled so the tabs never disagree
+ * silently with the Timeline tab's own UTC-formatted timestamps.
+ */
+export function formatTimestampUtc(iso: string): string {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return iso;
+  const utc = new Date(ms).toISOString(); // YYYY-MM-DDTHH:mm:ss.sssZ
+  const month = Number(utc.slice(5, 7));
+  const day = Number(utc.slice(8, 10));
+  const time = utc.slice(11, 19); // HH:mm:ss
+  return `${MONTH_NAMES[month - 1]} ${day}, ${time} UTC`;
+}
+
 export interface AnomalyWindow {
   first: UtcParts;
   last: UtcParts;

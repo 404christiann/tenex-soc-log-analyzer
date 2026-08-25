@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Anomaly, PaginatedEvents, StoredLogEvent } from "@tenex/shared";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -10,19 +10,9 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowUpDown, ChevronLeft, ChevronRight, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getSeverity, SEVERITY_ROW_CLASSES } from "@/lib/severity";
+import { SEVERITY_ROW_CLASSES } from "@/lib/severity";
 import { ApiError, getLogFileEvents } from "@/lib/api";
-
-function formatTimestamp(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
+import { anomalySeverity, formatTimestampUtc } from "@/lib/digest";
 
 export function EventsTable({
   fileId,
@@ -48,20 +38,36 @@ export function EventsTable({
   const [anomaliesOnly, setAnomaliesOnly] = useState(false);
   const [sortDesc, setSortDesc] = useState(false);
 
+  // Request-token/generation-counter pattern: guards against a stale
+  // in-flight fetch (e.g. for page B) clobbering `loading`/`error`/cache
+  // state after the user has since navigated to a different page (e.g.
+  // cached page C, which returns early below without ever touching
+  // `loading`). Only the most recent `goToPage` call's continuation is
+  // allowed to apply its result.
+  const requestTokenRef = useRef(0);
+
   async function goToPage(nextPage: number) {
     if (nextPage < 0 || nextPage >= totalPages) return;
     setPage(nextPage);
-    if (pageCache.has(nextPage)) return;
+    const token = ++requestTokenRef.current;
+    if (pageCache.has(nextPage)) {
+      // Already-available data — never leave a stale spinner from an
+      // older in-flight request showing over it.
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     setError(null);
     try {
       const result = await getLogFileEvents(fileId, nextPage, pageSize);
+      if (requestTokenRef.current !== token) return;
       setPageCache((prev) => new Map(prev).set(nextPage, result.items));
     } catch (err) {
+      if (requestTokenRef.current !== token) return;
       setError(err instanceof ApiError ? err.message : "Failed to load this page of events.");
     } finally {
-      setLoading(false);
+      if (requestTokenRef.current === token) setLoading(false);
     }
   }
 
@@ -145,9 +151,7 @@ export function EventsTable({
               rows.map((event) => {
                 const eventAnomalies = anomaliesByEventId.get(event.id);
                 const topAnomaly = eventAnomalies?.[0];
-                const severity = topAnomaly
-                  ? getSeverity(topAnomaly.llmAdjustedConfidence ?? topAnomaly.baseConfidence)
-                  : null;
+                const severity = topAnomaly ? anomalySeverity(topAnomaly) : null;
                 return (
                   <TableRow
                     key={event.id}
@@ -161,7 +165,7 @@ export function EventsTable({
                       {topAnomaly && <ShieldAlert className="size-3.5 text-current opacity-80" />}
                     </TableCell>
                     <TableCell className="font-mono text-xs whitespace-nowrap">
-                      {formatTimestamp(event.datetime)}
+                      {formatTimestampUtc(event.datetime)}
                     </TableCell>
                     <TableCell className="font-mono text-xs whitespace-nowrap">{event.cip}</TableCell>
                     <TableCell className="max-w-[14ch] truncate text-xs">{event.login}</TableCell>

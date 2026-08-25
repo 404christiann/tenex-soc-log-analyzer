@@ -165,6 +165,27 @@ describe("parseLogFile — unit tests", () => {
     expect(result.events[0]?.threatname).toBe("Win32.Trojan.Generic");
   });
 
+  it("reports a ParseError (not silently 0) for an empty numeric field value", () => {
+    // Number("") is 0 in JS — without the NaN guard, this would silently
+    // parse as a valid bytes_out=0 instead of failing validation.
+    // Padded with enough good lines that the bad line doesn't itself trip
+    // the file-level abort threshold.
+    const goodLine =
+      "datetime=2026-01-01T09:00:00Z\tcip=10.0.0.1\tlogin=jdoe\turl=https://x.com\taction=allowed\turlcat=Business\tthreatname=\trespcode=200\tbytes_out=100\tbytes_in=200\tuseragent=Mozilla/5.0\treqmethod=GET";
+    const badLine =
+      "datetime=2026-01-01T09:00:17Z\tcip=10.0.0.1\tlogin=jdoe\turl=https://x.com\taction=allowed\turlcat=Business\tthreatname=\trespcode=200\tbytes_out=\tbytes_in=200\tuseragent=Mozilla/5.0\treqmethod=GET";
+    const text = [goodLine, goodLine, goodLine, goodLine, goodLine, goodLine, goodLine, goodLine, goodLine, badLine].join(
+      "\n",
+    );
+    const result = parseLogFile(Buffer.from(text, "utf-8"));
+    expect(result.fileLevelError).toBeUndefined();
+    expect(result.events).toHaveLength(9);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.lineNumber).toBe(10);
+    expect(result.errors[0]?.reason).toContain("schema validation failed");
+    expect(result.errors[0]?.reason).toContain("bytes_out");
+  });
+
   it("reports a ParseError (not a throw) for a line missing a required field", () => {
     // Paired with enough valid lines that the bad line doesn't itself trip
     // the file-level abort threshold (which is exercised separately below).

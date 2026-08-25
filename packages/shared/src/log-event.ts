@@ -57,8 +57,15 @@ export const HIGH_RISK_URL_CATEGORIES = [
 ] as const satisfies readonly UrlCategory[];
 
 export const LogEventSchema = z.object({
-  /** ISO 8601 timestamp. Wire field `datetime=`. */
-  datetime: z.string(),
+  /**
+   * ISO 8601 timestamp. Wire field `datetime=`. Validated (not just
+   * `z.string()`) so a garbled/unparseable value fails parsing here instead
+   * of silently becoming `NaN` later when rule modules do
+   * `new Date(e.datetime).getTime()`. The generator (scripts/generate-logs/
+   * wire-format.ts `formatDatetime`) always emits whole-second, `Z`-suffixed
+   * timestamps (e.g. `2026-01-01T09:00:00Z`), which this format accepts.
+   */
+  datetime: z.iso.datetime(),
   /** Client IP — actor identity for per-IP rate anomalies. Wire field `cip=`. */
   cip: z.string(),
   /**

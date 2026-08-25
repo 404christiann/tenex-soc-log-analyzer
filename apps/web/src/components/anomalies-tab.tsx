@@ -8,7 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { LlmStatusBanner } from "@/components/llm-status-banner";
 import { cn } from "@/lib/utils";
-import { getSeverity, SEVERITY_BADGE_CLASSES, SEVERITY_DOT_CLASSES, SEVERITY_LABEL, type Severity } from "@/lib/severity";
+import { anomalySeverity, formatTimestampUtc } from "@/lib/digest";
+import { SEVERITY_BADGE_CLASSES, SEVERITY_DOT_CLASSES, SEVERITY_LABEL, SEVERITY_ORDER, type Severity } from "@/lib/severity";
 
 /**
  * The Anomalies tab (DECISIONS.md §14c): severity sub-tabs (High/Medium/Low,
@@ -34,23 +35,6 @@ const RULE_TYPE_LABELS: Record<Anomaly["ruleType"], string> = {
   rare_scripted_user_agent: "Rare/scripted UA",
   beaconing: "Beaconing (C2 interval)",
 };
-
-const SEVERITY_ORDER: Severity[] = ["high", "medium", "low"];
-
-function anomalySeverity(anomaly: Anomaly): Severity {
-  return getSeverity(anomaly.llmAdjustedConfidence ?? anomaly.baseConfidence);
-}
-
-function formatTimestamp(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
 
 export function AnomaliesTab({
   anomalies,
@@ -223,7 +207,7 @@ function AnomaliesTable({
                   )}
                 </span>
                 <span className="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground">
-                  {anomaly.eventDatetime ? formatTimestamp(anomaly.eventDatetime) : "—"}
+                  {anomaly.eventDatetime ? formatTimestampUtc(anomaly.eventDatetime) : "—"}
                 </span>
                 <span className="flex items-center justify-center py-2 pr-2">
                   <ChevronDown

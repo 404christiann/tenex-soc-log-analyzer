@@ -131,7 +131,12 @@ function parseLine(lineText: string, lineNumber: number): LineParseOutcome {
     let value: unknown = rawValue;
 
     if (NUMERIC_FIELDS.has(key)) {
-      value = Number(rawValue);
+      // `Number("")` evaluates to `0`, which would silently turn a
+      // malformed/empty numeric field into a valid-looking `0` instead of
+      // failing schema validation below — force it to `NaN` so it's
+      // rejected by `z.number()` (which fails Number.isNaN values) via the
+      // existing safeParse/ParseError path instead.
+      value = rawValue === "" ? NaN : Number(rawValue);
     } else if (key === "threatname" && rawValue === "") {
       // The wire format has no literal encoding for `null` — an empty
       // `threatname=` value is the convention for "no threat", which is
