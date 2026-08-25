@@ -388,6 +388,13 @@ subagents working from the plan and the decisions record — including this docu
   expressed in Postgres policy SQL that runs regardless. (The service-role key, which bypasses
   RLS, is used only where structurally required — the Storage upload write and the initial row
   inserts during processing, before there's a "read" to scope — never for a client-facing read.)
+- **Least-privilege grants, caught in a self-review.** A later security pass found that the
+  `authenticated` role still had `insert`/`update`/`delete` grants on all four tables and the
+  upload bucket, left over from an earlier migration — RLS meant this was never a cross-tenant
+  read risk, but it was unused write surface no legitimate code path needed (every write in the
+  app goes through the service-role client). Tightened to `select`-only in
+  `supabase/migrations/0006_tighten_data_api_grants.sql` and `0007_tighten_storage_grants.sql`,
+  verified against the integration suite before and after applying to both local and hosted.
 - **Upload validation before anything is persisted**, in a fixed order, all as independently
   unit-tested pure functions: extension allowlist (`.log`/`.txt`), a 10MB size cap, filename
   sanitization (rejects path traversal and control characters), known binary file-signature
